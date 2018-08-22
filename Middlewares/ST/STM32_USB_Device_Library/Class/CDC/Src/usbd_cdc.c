@@ -615,6 +615,7 @@ static uint8_t USBD_CDC_DataIn(USBD_HandleTypeDef *pdev, uint8_t epnum) {
 			hcdc->NtState = 0;
 
 		} else {
+			printf("send rxuart to usb\n\r");
 			hcdc->TxState = 0;
 			HAL_UART_Receive_IT(&huart2, UserTxBufferFS, 2);
 		}
