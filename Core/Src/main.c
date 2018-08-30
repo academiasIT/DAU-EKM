@@ -220,7 +220,7 @@ int main(void) {
 			DataUsbRecv = 0;
 		}
 		if (DataUartRecv == 1) {
-			//printf("tx usb data\n\r");
+			printf("tx usb data\n\r");
 			UsbResult = CDC_Transmit_FS(UserTxBufferFS, DataLenght);
 			DataUartRecv = 0;
 		}
