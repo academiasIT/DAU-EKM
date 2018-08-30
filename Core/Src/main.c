@@ -62,12 +62,15 @@
 //UART_HandleTypeDef huart1;
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
+CRC_HandleTypeDef hcrc;
 
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_CRC_Init(void);
+
 //static void MX_USART1_UART_Init(void);
 
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart);
@@ -79,7 +82,27 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart);
 /* USER CODE END PFP */
 
 /* USER CODE BEGIN 0 */
+//#define HEADER_LENGHT (1<<4)
+#define DATA_LENGHT 512
+#define TOKEN_START 0xFE456688
 
+enum RxState {
+	Search, Get_Data
+};
+
+volatile uint8_t DataRx[DATA_LENGHT];
+volatile uint32_t DataLenght;
+volatile uint8_t DataRxRdy;
+volatile uint8_t HeaderRx[HEADER_LENGHT];
+volatile uint8_t iHeaderRx;
+volatile uint8_t RxTokenRdy;
+volatile uint32_t RxTokenSec;
+volatile enum RxState rx_state;
+
+//uint8_t DataTx[DATA_LENGHT];
+//uint8_t HeaderTx[HEADER_LENGHT];
+volatile uint8_t flagTx;
+volatile uint8_t flagRx;
 /* USER CODE END 0 */
 
 /**
@@ -111,6 +134,7 @@ int main(void) {
 	/* Initialize all configured peripherals */
 	MX_GPIO_Init();
 	MX_USART1_UART_Init();
+	MX_CRC_Init();
 	MX_USB_DEVICE_Init();
 	MX_USART2_UART_Init();
 	/* USER CODE BEGIN 2 */
@@ -139,32 +163,65 @@ int main(void) {
 	/* Infinite loop */
 	/* USER CODE BEGIN WHILE */
 
+	HAL_UART_Receive_IT(&huart2, HeaderRx,
+	HEADER_LENGHT);
+	rx_state = Search;
+	iHeaderRx = 0;
+	DataRxRdy = 0;
+	RxTokenRdy = 0;
+	RxTokenSec = 0;
+	uint32_t txHeaderSec = 0;
+
 	HAL_StatusTypeDef UartResult;
 	uint8_t UsbResult;
 	while (1) {
 
 		/* USER CODE END WHILE */
-
+		if (RxTokenRdy == 1) {
+			RxTokenRdy = 0;
+			printf("Token n: %lu\n", RxTokenSec);
+		}
+		if (DataRxRdy == 1) {
+			DataRxRdy = 0;
+			printf("uart data recv\n");
+		}
+		if (flagTx == 1) {
+			printf("-Tx ok\n");
+			flagTx = 0;
+		}
+		if (flagRx == 1) {
+			printf("-Rx occur\n");
+			flagRx = 0;
+		}
+		if (flagRx == 2) {
+			printf("-Rx header data len: %lu\n", DataLenght);
+			flagRx = 0;
+		}
+		if (flagRx == 3) {
+			printf("-Rx Token start\n");
+			flagRx = 0;
+		}
+		if (flagRx == 4) {
+			printf("Rx no token\n");
+			flagRx = 0;
+		}
 		/* USER CODE BEGIN 3 */
 		if (DataUsbRecv == 1) { /* se ha recibido un paquete por usb */
+			/* forming Header*/
+			*((uint32_t *) UserRxBufferFS) = TOKEN_START;
+			((uint32_t *) UserRxBufferFS)[1] = txHeaderSec++; //numero corelativo del paquete de datos
+			((uint32_t *) UserRxBufferFS)[2] = (uint32_t) LengthDataUsbRecv;
+			((uint32_t *) UserRxBufferFS)[3] = HAL_CRC_Calculate(&hcrc,
+					(uint32_t *) UserRxBufferFS, 3);
+			//HAL_UART_Transmit_IT(&huart2, DataTx, HEADER_LENGHT + n);
+			flagTx = 0;
 			UartResult = HAL_UART_Transmit_IT(&huart2, UserRxBufferFS,
-					LengthDataUsbRecv);
+					LengthDataUsbRecv + HEADER_LENGHT);
 			DataUsbRecv = 0;
 		}
 		if (DataUartRecv == 1) {
-			if (UartTxHeader == 1) {
-				printf("tx usb data\n\r");
-				UsbResult = CDC_Transmit_FS(UserTxBufferFS, LengthDataUartRecv);
-			} else {
-				LengthDataUartRecv = *((uint16_t*) UserTxBufferFS);
-				HAL_StatusTypeDef result = HAL_UART_Receive_IT(&huart2,
-						UserTxBufferFS, LengthDataUartRecv);
-				printf("init recv in uart len %d\n\r", LengthDataUartRecv);
-				if (result == HAL_BUSY)
-					printf("HAL_UART_Receive_IT busy\n");
-				else
-					printf("HAL_UART_Receive_IT %x\n", result);
-			}
+			//printf("tx usb data\n\r");
+			UsbResult = CDC_Transmit_FS(UserTxBufferFS, DataLenght);
 			DataUartRecv = 0;
 		}
 
@@ -175,28 +232,88 @@ int main(void) {
 
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
 	if (huart == &huart2) {
-		printf("uart tx completed\n\r");
+		//printf("uart tx completed\n\r");
 		CDC_EnableReceiveData_FS();
 	}
 }
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-	printf("HAL_UART_RxCpltCallback\n");
+	uint8_t buf[HEADER_LENGHT];
+	uint8_t token[4];
+	uint32_t crc;
+	uint8_t idx;
+
 	if (huart == &huart2) {
-		if (UartTxHeader == 1) {/* header recibido*/
-			UartTxHeader = 0;
+		flagRx = 1;
+		switch (rx_state) {
+		case Search:
+			iHeaderRx = 0x0F & ((huart->RxXferSize) + iHeaderRx); //indice del byte consecutivo al ultimo byte recibido
+
+			idx = 0x0F & (iHeaderRx - HEADER_LENGHT); //indice al primer byte de la ventana de header
+
+			for (int i = 0; i < 4; i++) { //obtencion del token en la ventana
+				token[i] = HeaderRx[idx];
+				idx = 0x0F & (idx + 1);
+			}
+			//printf("tkn %lx, idx: %u\n",*((uint32_t *) token), idx);
+
+			if (*((uint32_t *) token) == TOKEN_START) {
+				//printf("token ok\n");
+				flagRx = 3;
+				*((uint32_t *) buf) = *((uint32_t *) token);
+				for (int i = 4; i < HEADER_LENGHT; i++) {
+					buf[i] = HeaderRx[idx];
+					idx = 0x0F & (idx + 1);
+				}
+				//printf("token sec: %lu\n",((uint32_t *) buf)[1]);
+				//printf("len: %lu\n",((uint32_t *) buf)[2]);
+				crc = HAL_CRC_Calculate(&hcrc, (uint32_t *) buf, 3);
+				if (crc == ((uint32_t *) buf)[3]) { //efectivamente se ha recibido una cabecera
+					//printf("CRC OK\n");
+					flagRx = 2;
+					DataLenght = ((uint32_t *) buf)[2];
+					HAL_UART_Receive_IT(&huart2, UserTxBufferFS,
+							(uint16_t) ((uint32_t *) buf)[2]); // recibe los datos
+					RxTokenSec = ((uint32_t *) buf)[1];
+					RxTokenRdy = 1;
+					rx_state = Get_Data;
+				} else {
+					HAL_UART_Receive_IT(&huart2, &HeaderRx[iHeaderRx], 1); // recibe un byte mas en la ventana
+				}
+
+			} else {
+				flagRx = 4;
+				HAL_UART_Receive_IT(&huart2, &HeaderRx[iHeaderRx], 1); // recibe un byte mas en la ventana
+			}
+			//HAL_Delay(10000);
+			break;
+		case Get_Data:
+			/*for(int i=0; i<HEADER_LENGHT; i++)
+			 HeaderRx[i] = 0;*/
+			iHeaderRx = 0;
 			DataUartRecv = 1;
-		} else { /* recibiendo data */
-			DataUartRecv = 1;
-			UartTxHeader = 1;
-			printf("tx usb data\n\r");
-			//CDC_Transmit_FS(UserTxBufferFS, LengthDataUartRecv);
+			DataLenght = huart->RxXferSize;
+			HAL_UART_Receive_IT(&huart2, HeaderRx, HEADER_LENGHT);
+			DataRxRdy = 1;
+			rx_state = Search;
+			break;
 		}
+
 	}
 }
 
-void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart){
-	switch(huart->ErrorCode){
+/* CRC init function */
+static void MX_CRC_Init(void) {
+
+	hcrc.Instance = CRC;
+	if (HAL_CRC_Init(&hcrc) != HAL_OK) {
+		_Error_Handler(__FILE__, __LINE__);
+	}
+
+}
+
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
+	switch (huart->ErrorCode) {
 	case HAL_UART_ERROR_NONE:
 		printf("HAL_UART_ERROR_NONE\n\r");
 		break;

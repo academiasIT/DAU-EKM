@@ -82,6 +82,7 @@
  /* It's up to user to redefine and/or remove those define */
  #define APP_RX_DATA_SIZE  1514
  #define APP_TX_DATA_SIZE  1514
+#define HEADER_LENGHT		(1<<4)
  /* USER CODE END PRIVATE_DEFINES */
 /* USER CODE END EXPORTED_DEFINES */
 
@@ -134,10 +135,10 @@ volatile uint16_t LengthDataUartRecv;
 /* Create buffer for reception and transmission           */
 /* It's up to user to redefine and/or remove those define */
 /** Received data over USB are stored in this buffer      */
-uint8_t UserRxBufferFS[APP_RX_DATA_SIZE+2];
+uint8_t UserRxBufferFS[APP_RX_DATA_SIZE+HEADER_LENGHT];
 
 /** Data to send over USB CDC are stored in this buffer   */
-uint8_t UserTxBufferFS[APP_TX_DATA_SIZE+2];
+uint8_t UserTxBufferFS[APP_TX_DATA_SIZE];
 /* USER CODE END EXPORTED_VARIABLES */
 
 

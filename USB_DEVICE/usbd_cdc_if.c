@@ -265,7 +265,7 @@ static int8_t CDC_ReceiveData_FS(uint8_t* Buf, uint32_t *Len) {
 	DataUsbRecv = 1;
 	LengthDataUsbRecv = *((uint16_t *)Len);
 	*((uint16_t *)(Buf-2)) = (uint16_t)(*Len);
-	printf("recv data len %d\n\r", *Len);
+	//printf("recv data len %d\n\r", *Len);
 	//USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0], *Len);
 	//USBD_CDC_ReceiveData(&hUsbDeviceFS);
 	return (USBD_OK);
@@ -275,7 +275,7 @@ static int8_t CDC_ReceiveData_FS(uint8_t* Buf, uint32_t *Len) {
 int8_t CDC_EnableReceiveData_FS(void) {
 	DataUsbRecv = 0;
 	uint16_t pLenghtBufRx = APP_RX_DATA_SIZE;
-	USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &UserRxBufferFS[2], &pLenghtBufRx);
+	USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &UserRxBufferFS[HEADER_LENGHT], &pLenghtBufRx);
 	USBD_CDC_ReceiveData(&hUsbDeviceFS);
 	return (USBD_OK);
 }
